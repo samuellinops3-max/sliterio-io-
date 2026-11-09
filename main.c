@@ -169,7 +169,7 @@ static void init_audio(void)
     memset(&p, 0, sizeof(p));
     p.numChannels = 2;       /* AUDIO_PORT_2CH */
     p.numBlocks = ANBLK;     /* AUDIO_BLOCK_16 */
-    p.attr = 0;
+    p.attrib = 0;
     p.level = 1.0f;
     if (audioInit() != 0) return;
     if (audioPortOpen(&p, &aport) != 0) { audioQuit(); return; }
