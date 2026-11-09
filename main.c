@@ -184,6 +184,7 @@ static int pelrot = 0, dead_t = 0, x_prev = 0;
 static float camx = WORLD / 2, camy = WORLD / 2;
 static float pad_ax = 0, pad_ay = 0, pad_mag = 0;
 static int pad_boost = 0, pad_x = 0;
+static int pad_port = 0;
 
 static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 
@@ -346,25 +347,49 @@ static void init_game(void)
     dead_t = 0;
 }
 
+/* ---------- CONTROLE ARRUMADO - NAO TRAVA MAIS ---------- */
 static void read_pad(void)
 {
     padInfo info;
     padData d;
     pad_ax = pad_ay = pad_mag = 0;
     pad_boost = pad_x = 0;
+
     ioPadGetInfo(&info);
-    if (info.status[0]) {
-        ioPadGetData(0, &d);
-        float ax = ((int)d.ANA_L_H - 128) / 128.0f, ay = ((int)d.ANA_L_V - 128) / 128.0f;
-        if (d.BTN_LEFT) ax = -1;
-        if (d.BTN_RIGHT) ax = 1;
-        if (d.BTN_UP) ay = -1;
-        if (d.BTN_DOWN) ay = 1;
-        pad_ax = ax; pad_ay = ay;
-        pad_mag = sqrtf(ax * ax + ay * ay);
-        pad_boost = d.BTN_CROSS || d.BTN_R1 || d.BTN_R2;
-        pad_x = d.BTN_CROSS;
+
+    int found = -1;
+    for (int p = 0; p < 7; p++) {
+        if (info.status[p]) { found = p; break; }
     }
+
+    if (found < 0) {
+        static int retry = 0;
+        if (++retry > 60) {
+            ioPadInit(7);
+            retry = 0;
+        }
+        return;
+    }
+
+    pad_port = found;
+    memset(&d, 0, sizeof(d));
+    if (ioPadGetData(pad_port, &d) != 0) return;
+
+    float ax = ((int)d.ANA_L_H - 128) / 128.0f;
+    float ay = ((int)d.ANA_L_V - 128) / 128.0f;
+
+    if (ax > -0.15f && ax < 0.15f) ax = 0;
+    if (ay > -0.15f && ay < 0.15f) ay = 0;
+
+    if (d.BTN_LEFT) ax = -1;
+    if (d.BTN_RIGHT) ax = 1;
+    if (d.BTN_UP) ay = -1;
+    if (d.BTN_DOWN) ay = 1;
+
+    pad_ax = ax; pad_ay = ay;
+    pad_mag = sqrtf(ax * ax + ay * ay);
+    pad_boost = d.BTN_CROSS || d.BTN_R1 || d.BTN_R2;
+    pad_x = d.BTN_CROSS;
 }
 
 static void update_game(void)
@@ -396,7 +421,6 @@ static void render(void)
     u32 n = W * H;
     for (u32 i = 0; i < n; i++) back[i] = 0x000E1420;
 
-    /* fora da arena */
     int sx0 = (int)((0 - camx) * sc + hw), sx1 = (int)((WORLD - camx) * sc + hw);
     int sy0 = (int)((0 - camy) * sc + hh), sy1 = (int)((WORLD - camy) * sc + hh);
     u32 red = 0x00380E12;
@@ -405,7 +429,6 @@ static void render(void)
     if (sy0 > 0) fill_rect(0, 0, W, sy0, red);
     if (sy1 < (int)H) fill_rect(0, sy1, W, H - sy1, red);
 
-    /* pontos de fundo para dar sensacao de movimento */
     float gx0 = floorf((camx - hw / sc) / 100.0f) * 100.0f;
     float gy0 = floorf((camy - hh / sc) / 100.0f) * 100.0f;
     for (float gx = gx0; gx < camx + hw / sc; gx += 100.0f) {
@@ -440,7 +463,6 @@ static void render(void)
         }
     }
 
-    /* HUD */
     char buf[32];
     int ui = (int)(4 * sc + 0.5f);
     if (ui < 3) ui = 3;
