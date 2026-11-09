@@ -611,4 +611,3 @@ static void init_game(void)
     for (int k = 0; k < NPEL; k++) add_pellet(frand() * WORLD, frand() * WORLD, 1 + (rand() % 5 == 0));
     for (int i = 0; i < NSN; i++) { sn[i].score = 0; spawn_snake(i); }
     for (int p = 0; p < MAXP; p++) dead_t[p] = 0;
-}
