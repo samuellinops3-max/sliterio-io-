@@ -1,8 +1,13 @@
-// COPO AVENTURA - Boss Rush estilo Cuphead - PS3 PSL1GHT
+// Cobra Arena - jogo estilo slither.io, offline, nativo para PS3 (PSL1GHT)
+// 1 ou 2 jogadores (tela dividida), com som e musica.
+// Controles: analogico esquerdo ou direcional = direcao
+//            X / R1 / R2 / L1 / L2 = turbo
+//            START = pausa | SELECT (na pausa) = menu | TRIANGULO = liga/desliga musica
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <malloc.h>
 #include <ppu-types.h>
@@ -10,265 +15,600 @@
 #include <sysutil/video.h>
 #include <rsx/rsx.h>
 #include <io/pad.h>
-#define CB_SIZE (0x100000)
-#define HOST_SIZE (32*1024*1024)
-#define PI 3.14159265f
-#define MAXB 80
-#define MAXE 80
+#include <audio/audio.h>
 
-static gcmContextData *ctx;
-static u32 W,H,*fb[2],fboff[2],*back;
-static int cur=0,first_flip=1;
-static volatile int running=1;
-static void sysutil_cb(u64 s,u64 p,void*u){(void)p;(void)u;if(s==SYSUTIL_EXIT_GAME)running=0;}
-static void init_screen(void){
- void *host=memalign(1024*1024,HOST_SIZE); rsxInit(&ctx,CB_SIZE,HOST_SIZE,host);
- videoState st; videoGetState(VIDEO_PRIMARY,0,&st); u32 resid=st.displayMode.resolution;
- if(videoGetResolutionAvailability(VIDEO_PRIMARY,VIDEO_RESOLUTION_720,VIDEO_ASPECT_AUTO,0)) resid=VIDEO_RESOLUTION_720;
- videoResolution res; videoGetResolution(resid,&res); W=res.width; H=res.height;
- videoConfiguration vc; memset(&vc,0,sizeof(vc)); vc.resolution=resid; vc.format=VIDEO_BUFFER_FORMAT_XRGB; vc.aspect=VIDEO_ASPECT_AUTO; vc.pitch=W*4;
- videoConfigure(VIDEO_PRIMARY,&vc,NULL,0); videoGetState(VIDEO_PRIMARY,0,&st); gcmSetFlipMode(GCM_FLIP_VSYNC);
- for(int i=0;i<2;i++){fb[i]=(u32*)rsxMemalign(64,W*H*4); gcmAddressToOffset(fb[i],&fboff[i]); gcmSetDisplayBuffer(i,fboff[i],W*4,W,H);}
- back=(u32*)memalign(64,W*H*4); memset(back,0,W*H*4); gcmResetFlipStatus();
-}
-static void wait_flip(void){while(gcmGetFlipStatus()!=0) usleep(200); gcmResetFlipStatus();}
-static void present(void){if(!first_flip) wait_flip(); else gcmResetFlipStatus(); memcpy(fb[cur],back,W*H*4); gcmSetFlip(ctx,cur); rsxFlushBuffer(ctx); gcmSetWaitFlip(ctx); cur^=1; first_flip=0;}
-static void fill_rect(int x,int y,int w,int h,u32 c){int x0=x<0?0:x,y0=y<0?0:y,x1=x+w,y1=y+h; if(x1>(int)W)x1=W; if(y1>(int)H)y1=H; for(int yy=y0;yy<y1;yy++){u32*p=back+yy*W; for(int xx=x0;xx<x1;xx++)p[xx]=c;}}
-static void circle(int cx,int cy,int r,u32 c){if(r<1)r=1; if(cx+r<0||cx-r>=(int)W||cy+r<0||cy-r>=(int)H)return; for(int dy=-r;dy<=r;dy++){int y=cy+dy; if(y<0||y>=(int)H)continue; int hw=(int)sqrtf((float)(r*r-dy*dy)); int x0=cx-hw,x1=cx+hw; if(x0<0)x0=0; if(x1>=(int)W)x1=W-1; u32*p=back+y*W; for(int x=x0;x<=x1;x++)p[x]=c;}}
-typedef struct{char c;const char*p;} Glyph;
-static const Glyph glyphs[]={
- {'0',"###" "#.#" "#.#" "#.#" "###"},
- {'1',".#." "##." ".#." ".#." "###"},
- {'2',"###" "..#" "###" "#.." "###"},
- {'3',"###" "..#" "###" "..#" "###"},
- {'4',"#.#" "#.#" "###" "..#" "..#"},
- {'5',"###" "#.." "###" "..#" "###"},
- {'6',"###" "#.." "###" "#.#" "###"},
- {'7',"###" "..#" "..#" "..#" "..#"},
- {'8',"###" "#.#" "###" "#.#" "###"},
- {'9',"###" "#.#" "###" "..#" "###"},
- {'A',".#." "#.#" "###" "#.#" "#.#"},
- {'B',"##." "#.#" "##." "#.#" "##."},
- {'C',"###" "#.." "#.." "#.." "###"},
- {'D',"##." "#.#" "#.#" "#.#" "##."},
- {'E',"###" "#.." "###" "#.." "###"},
- {'F',"###" "#.." "###" "#.." "#.."},
- {'G',"###" "#.." "#.#" "#.#" "###"},
- {'H',"#.#" "#.#" "###" "#.#" "#.#"},
- {'I',"###" ".#." ".#." ".#." "###"},
- {'L',"#.." "#.." "#.." "#.." "###"},
- {'M',"#.#" "###" "###" "#.#" "#.#"},
- {'N',"#.#" "###" "###" "#.#" "#.#"},
- {'O',"###" "#.#" "#.#" "#.#" "###"},
- {'P',"###" "#.#" "###" "#.." "#.."},
- {'R',"##." "#.#" "##." "#.#" "#.#"},
- {'S',"###" "#.." "###" "..#" "###"},
- {'T',"###" ".#." ".#." ".#." ".#."},
- {'U',"#.#" "#.#" "#.#" "#.#" "###"},
- {'V',"#.#" "#.#" "#.#" "#.#" ".#."},
- {'X',"#.#" "#.#" ".#." "#.#" "#.#"},
- {'W',"#.#" "#.#" "###" "###" "#.#"},
- {'Y',"#.#" "#.#" ".#." ".#." ".#."},
- {' ',"..." "..." "..." "..." "..."},
+#define CB_SIZE   (0x100000)
+#define HOST_SIZE (32 * 1024 * 1024)
+
+#define WORLD  3200.0f
+#define MAXSEG 420
+#define NSN    10
+#define NPEL   500
+#define SP     7.0f
+#define PI     3.14159265f
+#define MAXP   2      /* jogadores */
+#define NPADS  7      /* portas de controle verificadas */
+
+typedef struct {
+    float x[MAXSEG], y[MAXSEG];
+    int len, alive, respawn, boost, grow, score, tick;
+    float ang, tgt;
+    u32 col;
+} Snake;
+
+typedef struct {
+    float x, y;
+    int size, active;
+    u32 col;
+} Pellet;
+
+static const u32 palette[8] = {
+    0x00FF4D4D, 0x0055D6FF, 0x0066FF66, 0x00FFD23F,
+    0x00C77DFF, 0x00FF8FAB, 0x0000E5C0, 0x00FF9F43
 };
-static const char* find_glyph(char c){for(unsigned i=0;i<sizeof(glyphs)/sizeof(glyphs[0]);i++) if(glyphs[i].c==c) return glyphs[i].p; return NULL;}
-static int text_width(const char*s,int sc){return (int)strlen(s)*4*sc-sc;}
-static void draw_text(const char*s,int x,int y,int sc,u32 c){for(;*s;s++){const char*g=find_glyph(*s); if(g) for(int r=0;r<5;r++) for(int k=0;k<3;k++) if(g[r*3+k]=='#') fill_rect(x+k*sc,y+r*sc,sc,sc,c); x+=4*sc;}}
 
-typedef struct{float x,y,vx,vy; int active,dir,big;} Bullet;
-typedef struct{float x,y,vx,vy; int active,type,life;} Enemy;
-static float px,py,pvy; static int pface=1,php=3,pinv=0,dash_t=0,dash_cd=0,onground=1,shoot_cd=0;
-static int pad_l,pad_r,pad_jump,pad_shoot,pad_dash,pad_special,pad_jump_prev,pad_dash_prev;
-static Bullet bul[MAXB];
-static Enemy ene[MAXE];
-static int boss_hp,boss_max,boss_type,boss_state,boss_timer,boss_x,boss_y,boss_vx,stage=0,game_state=0,win_timer=0,score=0,frame=0;
-static float camshake=0;
-static float frand(void){return (float)rand()/(float)RAND_MAX;}
-static void spawn_bullet(float x,float y,float vx,int big){for(int i=0;i<MAXB;i++) if(!bul[i].active){bul[i].x=x;bul[i].y=y;bul[i].vx=vx;bul[i].vy=0;bul[i].active=1;bul[i].dir=vx>0?1:-1;bul[i].big=big;return;}}
-static void spawn_enemy(float x,float y,float vx,float vy,int type){for(int i=0;i<MAXE;i++) if(!ene[i].active){ene[i].x=x;ene[i].y=y;ene[i].vx=vx;ene[i].vy=vy;ene[i].active=1;ene[i].type=type;ene[i].life=60;return;}}
-static void start_boss(int s){
- stage=s; boss_type=s; boss_state=0; boss_timer=0;
- boss_x=(int)W-300; boss_y=(int)H-260; boss_vx=0;
- if(s==0){boss_max=120; boss_hp=120;}
- if(s==1){boss_max=170; boss_hp=170; boss_y=(int)H-220;}
- if(s==2){boss_max=230; boss_hp=230; boss_y=180;}
- for(int i=0;i<MAXE;i++) ene[i].active=0;
- for(int i=0;i<MAXB;i++) bul[i].active=0;
- px=120; py=(int)H-180; pvy=0; php=3; pinv=60;
+/* ======================================================================
+ *  AUDIO  (sintetizado em tempo real: efeitos + musica, sem arquivos)
+ * ====================================================================== */
+#define SR      48000.0f
+#define ABLK    256          /* amostras por bloco (fixo no PS3) */
+#define ANBLK   16           /* blocos no buffer (16 = ~85 ms) */
+#define NVOICE  8
+
+typedef struct {
+    int on, wave, left, total;
+    float f, df, ph, vol, nz;
+} Voice;
+
+static Voice vo[NVOICE];
+static int audio_ok = 0, music_on = 1;
+static u32 aport;
+static audioPortConfig acfg;
+static float *abase;
+static u32 awr = ANBLK - 1;
+
+static u32 rng_s = 2463534242u;
+static float arand(void)
+{
+    rng_s ^= rng_s << 13; rng_s ^= rng_s >> 17; rng_s ^= rng_s << 5;
+    return (float)(rng_s & 0xFFFF) / 65535.0f;
 }
-static void start_game(void){score=0; game_state=1; start_boss(0);}
-static void read_pad(void){
- padInfo info; padData d;
- pad_l=pad_r=pad_jump=pad_shoot=pad_dash=pad_special=0;
- ioPadGetInfo(&info);
- int found=-1; for(int p=0;p<7;p++) if(info.status[p]){found=p;break;}
- if(found<0){ static int retry=0; if(++retry>60){ioPadInit(7); retry=0;} return; }
- memset(&d,0,sizeof(d));
- if(ioPadGetData(found,&d)!=0) return;
- float ax=((int)d.ANA_L_H-128)/128.0f;
- if(ax<-0.3f) pad_l=1; if(ax>0.3f) pad_r=1;
- if(d.BTN_LEFT) pad_l=1; if(d.BTN_RIGHT) pad_r=1;
- pad_jump=d.BTN_CROSS;
- pad_shoot=d.BTN_SQUARE;
- pad_dash=d.BTN_CIRCLE;
- pad_special=d.BTN_R1;
-}
-static void hurt_player(void){
- if(pinv>0||dash_t>0||game_state!=1) return;
- php--; pinv=90; camshake=12;
- if(php<=0){game_state=2; win_timer=0;}
-}
-static void update_game(void){
- frame++;
- if(game_state==1){
-  float ground=(float)H-140;
-  float spd=5.5f;
-  if(dash_t>0){dash_t--; spd=13.0f; }
-  if(pad_l){px-=spd; pface=-1;}
-  if(pad_r){px+=spd; pface=1;}
-  if(px<30) px=30; if(px>W-60) px=W-60;
-  if(pad_jump && !pad_jump_prev && onground){pvy=-14.5f; onground=0;}
-  pvy+=0.7f; if(pvy>16) pvy=16;
-  py+=pvy; if(py>=ground){py=ground; pvy=0; onground=1;}
-  if(dash_cd>0) dash_cd--;
-  if(pad_dash && !pad_dash_prev && dash_cd==0){dash_t=14; dash_cd=45; pinv=20;}
-  if(shoot_cd>0) shoot_cd--;
-  if(pad_shoot && shoot_cd==0){spawn_bullet(px+30*pface,py+10,9*pface,0); shoot_cd=9; score+=1;}
-  if(pad_special && shoot_cd==0){spawn_bullet(px+30*pface,py+10,9*pface,1); shoot_cd=22; score+=2;}
-  if(pinv>0) pinv--;
-  for(int i=0;i<MAXB;i++) if(bul[i].active){
-   bul[i].x+=bul[i].vx;
-   if(bul[i].x<0||bul[i].x>W) bul[i].active=0;
-   if(bul[i].active && boss_hp>0){
-    float dx=bul[i].x-boss_x, dy=bul[i].y-boss_y;
-    if(dx*dx+dy*dy < 90*90){
-     bul[i].active=0; boss_hp -= bul[i].big?8:2; camshake=4;
-     if(boss_hp<=0){score+=500; game_state=3; win_timer=0; for(int k=0;k<MAXE;k++) ene[k].active=0;}
+
+static float mtof(int n) { return 440.0f * powf(2.0f, (n - 69) / 12.0f); }
+
+/* efeito: wave 0=quadrada 1=triangular 2=ruido; frequencia desliza de f0 a f1 */
+static void sfx(int wave, float f0, float f1, float dur, float vol)
+{
+    if (!audio_ok) return;
+    int best = 0, bl = 0x7FFFFFFF;
+    for (int i = 0; i < NVOICE; i++) {
+        int rem = vo[i].on ? vo[i].left : 0;
+        if (rem < bl) { bl = rem; best = i; }
     }
-   }
-  }
-  boss_timer++;
-  int bt=boss_timer%240;
-  if(boss_type==0){
-   boss_y=(int)H-260 + (int)(sinf(frame*0.05f)*12);
-   if(bt==30) spawn_enemy(boss_x-40,boss_y, -4, -3, 0);
-   if(bt==90) spawn_enemy(boss_x-40,boss_y, -5, 0, 0);
-   if(bt==150) spawn_enemy(boss_x-40,boss_y, -4, 3, 0);
-   if(bt==200) spawn_enemy(boss_x-40,boss_y, -6, -1, 1);
-  }
-  if(boss_type==1){
-   if(boss_state==0 && boss_timer%120==0){boss_state=1; boss_timer=0; boss_vx=-6;}
-   if(boss_state==1){boss_x+=boss_vx; boss_y=(int)H-220 - (int)(sinf(frame*0.2f)*60); if(boss_x<600){boss_state=2; boss_timer=0;}}
-   if(boss_state==2){boss_x+=3; if(boss_x>W-300){boss_state=0; boss_timer=0;} if(boss_timer%40==0) spawn_enemy(boss_x,boss_y-30,-5,-2,1);}
-  }
-  if(boss_type==2){
-   boss_x=(int)W-320 + (int)(sinf(frame*0.03f)*80);
-   boss_y=180 + (int)(sinf(frame*0.06f)*50);
-   if(bt==40||bt==110||bt==180) spawn_enemy(boss_x-60,boss_y+20,-7,0,2);
-   if(bt==220) spawn_enemy(boss_x-60,boss_y+40,-5,2,2);
-  }
-  for(int i=0;i<MAXE;i++) if(ene[i].active){
-   ene[i].x+=ene[i].vx; ene[i].y+=ene[i].vy; ene[i].life--;
-   if(ene[i].type==0) ene[i].vy+=0.15f;
-   if(ene[i].x<0||ene[i].y>H||ene[i].life<=0) ene[i].active=0;
-   float dx=ene[i].x-px, dy=ene[i].y-(py+10);
-   if(dx*dx+dy*dy < 32*32) {ene[i].active=0; hurt_player();}
-  }
-  {float dx=px-boss_x, dy=py-boss_y; if(dx*dx+dy*dy < 85*85) hurt_player();}
- }
- if(game_state==2){win_timer++; if(win_timer>120 && pad_jump){start_game();}}
- if(game_state==3){win_timer++; if(win_timer>140){ if(stage>=2){game_state=4;} else start_boss(stage+1); }}
- if(game_state==4 && pad_jump && win_timer>30){start_game();}
- if(game_state==0 && pad_jump && !pad_jump_prev){start_game();}
- pad_jump_prev=pad_jump; pad_dash_prev=pad_dash;
- if(camshake>0) camshake-=0.5f;
+    Voice *v = &vo[best];
+    v->wave = wave;
+    v->f = f0;
+    v->total = v->left = (int)(dur * SR);
+    if (v->total < 1) v->total = v->left = 1;
+    v->df = (f1 - f0) / (float)v->total;
+    v->ph = 0; v->vol = vol; v->nz = 0;
+    v->on = 1;
 }
-static void render(void){
- float sc=(float)W/1280.0f; int sh=(int)(camshake*(frand()-0.5f)*2);
- for(u32 i=0;i<W*H;i++) back[i]=0x00F7E7C3;
- fill_rect(0,0,W,(int)H*0.55f,0x00A8D8F0);
- for(int i=0;i<4;i++) {int cx=(int)(frame*0.3f+i*320); cx%= (int)W+200; cx-=100; circle(cx+sh,80+i*30,28,0x00FFFFFF); circle(cx+30+sh,80+i*30,32,0x00FFFFFF);}
- fill_rect(0,(int)H-140,W,140,0x005A3D1E);
- fill_rect(0,(int)H-140,W,12,0x007AB648);
- fill_rect(0,(int)H-140,W,6,0x00FFD23F);
- int ui=(int)(3*sc+0.5f); if(ui<2) ui=2;
- if(game_state==0){
-  draw_text("COPO", (int)W/2-180, 120, 10, 0x00FF4D4D);
-  draw_text("AVENTURA", (int)W/2-180, 220, 7, 0x00222222);
-  draw_text("X PARA COMECAR", (int)W/2-180, 380, 4, 0x00222222);
-  draw_text("QUADRADO ATIRA BOLA DASH", (int)W/2-260, 450, 3, 0x00555555);
-  circle(200, (int)H-220, 55, 0x00FFFFFF);
-  fill_rect(150,(int)H-260,100,20,0x00FF4D4D);
-  circle(200,(int)H-220,20,0x00000000);
-  return;
- }
- if(game_state!=2){
-  int blink = (pinv>0 && (frame/6)%2==0);
-  if(!blink){
-   int pxx=(int)px+sh, pyy=(int)py+sh;
-   fill_rect(pxx-28,pyy-20,56,62,0x00FFFFFF);
-   fill_rect(pxx-28,pyy-20,56,10,0x00FF4D4D);
-   fill_rect(pxx+10,pyy-45,8,30,0x00FF4D4D);
-   circle(pxx+10*pface,pyy+5,9,0x00000000);
-   circle(pxx+12*pface,pyy+2,3,0x00FFFFFF);
-   fill_rect(pxx-18,pyy+42,12,18,0x00222222);
-   fill_rect(pxx+8,pyy+42,12,18,0x00222222);
-   if(pad_shoot) fill_rect(pxx+28*pface,pyy+10,28,10,0x00FFFFFF);
-   if(dash_t>0) fill_rect(pxx-50,pyy+10,100,8,0x00FFD23F);
-  }
- }
- for(int i=0;i<MAXB;i++) if(bul[i].active){
-  if(bul[i].big) circle((int)bul[i].x+sh,(int)bul[i].y+sh,14,0x00FFD23F);
-  else circle((int)bul[i].x+sh,(int)bul[i].y+sh,7,0x00FFFFFF);
- }
- for(int i=0;i<MAXE;i++) if(ene[i].active){
-  if(ene[i].type==0) circle((int)ene[i].x+sh,(int)ene[i].y+sh,12,0x0066FF66);
-  if(ene[i].type==1) circle((int)ene[i].x+sh,(int)ene[i].y+sh,16,0x00A8D8F0);
-  if(ene[i].type==2) circle((int)ene[i].x+sh,(int)ene[i].y+sh,14,0x00FF6A00);
- }
- if(game_state==1||game_state==3){
-  int bx=boss_x+sh, by=boss_y+sh;
-  if(boss_type==0){
-   for(int a=0;a<8;a++){float ang=a*0.785f; circle(bx+(int)(cosf(ang)*70),by+(int)(sinf(ang)*70),30,0x00FF8FAB);}
-   circle(bx,by,55,0x00FFD23F); circle(bx-15,by-10,10,0x00000000); circle(bx+15,by-10,10,0x00000000);
-   fill_rect(bx-8,by+20,16,60,0x0066AA33);
-  }
-  if(boss_type==1){
-   circle(bx,by,75,0x0066CC44); circle(bx-30,by-60,28,0x0066CC44); circle(bx+30,by-60,28,0x0066CC44);
-   circle(bx-30,by-60,10,0x00FFFFFF); circle(bx+30,by-60,10,0x00FFFFFF);
-   circle(bx-30,by-60,5,0x00000000); circle(bx+30,by-60,5,0x00000000);
-   fill_rect(bx-40,by+20,80,18,0x00FFFFFF);
-  }
-  if(boss_type==2){
-   fill_rect(bx-90,by-20,180,70,0x00FF4D4D);
-   circle(bx+80,by-10,35,0x00FF4D4D); circle(bx+90,by-15,8,0x00FFFFFF); circle(bx+90,by-15,4,0x00000000);
-   fill_rect(bx-140,by+10,60,12,0x00FFD23F); fill_rect(bx-140,by-30,60,12,0x00FFD23F);
-  }
- }
- char buf[64];
- draw_text("VIDAS",24,18,ui,0x00222222);
- for(int i=0;i<php;i++) circle(40+i*36,70,14,0x00FF4D4D);
- sprintf(buf,"SCORE %d",score); draw_text(buf,24,95,ui,0x00222222);
- if(game_state==1){
-  draw_text("BOSS", (int)W-320,18,ui,0x00FF0000);
-  int bw=260; fill_rect((int)W-320,45,bw,18,0x00222222);
-  int fw=bw*boss_hp/boss_max; if(fw<0) fw=0; fill_rect((int)W-320,45,fw,18,0x00FF4D4D);
-  if(stage==0) draw_text("FLORONA", (int)W-320,75,ui,0x00222222);
-  if(stage==1) draw_text("SAPAO", (int)W-320,75,ui,0x00222222);
-  if(stage==2) draw_text("DRAGAO", (int)W-320,75,ui,0x00222222);
- }
- if(game_state==2){
-  draw_text("VOCE MORREU", (int)W/2-220, (int)H/2-60, 6, 0x00FF0000);
-  draw_text("APERTE X P TENTAR DE NOVO", (int)W/2-260, (int)H/2+40, 3, 0x00222222);
- }
- if(game_state==3){
-  draw_text("BOSS DERROTADO", (int)W/2-280, (int)H/2-40, 6, 0x0066AA00);
- }
- if(game_state==4){
-  draw_text("VOCE ZEROU", (int)W/2-200, 200, 8, 0x00FFD23F);
-  draw_text("COPO E O MELHOR", (int)W/2-220, 320, 5, 0x00222222);
-  sprintf(buf,"SCORE FINAL %d",score); draw_text(buf,(int)W/2-180,400,4,0x00222222);
-  draw_text("X P JOGAR DE NOVO", (int)W/2-200, 480, 3, 0x00555555);
- }
+
+static void sfx_eat(int k)   { sfx(0, 560.0f + (k % 6) * 70.0f, 1150.0f, 0.07f, 0.13f); }
+static void sfx_boost(void)  { sfx(2, 4000.0f, 1500.0f, 0.15f, 0.10f); }
+static void sfx_die(void)    { sfx(2, 7000.0f, 500.0f, 0.75f, 0.22f); sfx(1, 260.0f, 45.0f, 0.75f, 0.28f); }
+static void sfx_boom(void)   { sfx(2, 5000.0f, 800.0f, 0.25f, 0.10f); }
+static void sfx_menu(void)   { sfx(0, 880.0f, 880.0f, 0.04f, 0.10f); }
+static void sfx_start(void)  { sfx(0, 400.0f, 1300.0f, 0.28f, 0.16f); sfx(1, 200.0f, 650.0f, 0.28f, 0.2f); }
+static void sfx_error(void)  { sfx(0, 180.0f, 140.0f, 0.18f, 0.14f); }
+
+/* musica: lead (quadrada) + baixo (triangular), 140 BPM, 32 colcheias */
+static const u8 mel_lead[32] = {
+    72, 0, 75, 0, 79, 0, 75, 0,   77, 0, 74, 0, 71, 0, 74, 0,
+    75, 0, 72, 0, 68, 0, 72, 0,   74, 0, 71, 0, 67, 71, 74, 0
+};
+static const u8 mel_bass[4] = { 48, 43, 44, 43 };
+#define STEP_SAMPLES ((int)(SR * 60.0f / 140.0f / 2.0f))
+
+static int m_left = 1, m_step = -1;
+static float lead_f = 0, lead_ph = 0, lead_env = 0, bass_f = 0, bass_ph = 0, bass_env = 0;
+
+static float music_sample(void)
+{
+    if (--m_left <= 0) {
+        m_left += STEP_SAMPLES;
+        m_step = (m_step + 1) & 31;
+        int ln = mel_lead[m_step];
+        lead_f = ln ? mtof(ln) : 0.0f;
+        lead_env = 1.0f;
+        if ((m_step & 1) == 0) {
+            bass_f = mtof(mel_bass[m_step >> 3] + (((m_step >> 1) & 1) ? 12 : 0));
+            bass_env = 1.0f;
+        }
+    }
+    if (!music_on) return 0.0f;
+    lead_ph += lead_f / SR; if (lead_ph >= 1.0f) lead_ph -= 1.0f;
+    bass_ph += bass_f / SR; if (bass_ph >= 1.0f) bass_ph -= 1.0f;
+    lead_env *= 0.99985f;
+    bass_env *= 0.99980f;
+    float sq = (lead_ph < 0.25f) ? 1.0f : -1.0f;
+    float tr = 4.0f * fabsf(bass_ph - 0.5f) - 1.0f;
+    return (lead_f > 0 ? sq * lead_env * 0.05f : 0.0f) + tr * bass_env * 0.09f;
 }
-int main(int argc,char**argv){(void)argc;(void)argv; init_screen(); ioPadInit(7); sysUtilRegisterCallback(0,sysutil_cb,NULL); srand(12345); px=120; py=(int)H-180; game_state=0; while(running){sysUtilCheckCallback(); read_pad(); update_game(); render(); present();} return 0;}
+
+static float mix_sample(void)
+{
+    float s = music_sample();
+    for (int i = 0; i < NVOICE; i++) {
+        Voice *v = &vo[i];
+        if (!v->on) continue;
+        float env = (float)v->left / (float)v->total;
+        float o;
+        v->ph += v->f / SR;
+        if (v->ph >= 1.0f) {
+            v->ph -= 1.0f;
+            if (v->wave == 2) v->nz = arand() * 2.0f - 1.0f;
+        }
+        if (v->wave == 0)      o = (v->ph < 0.5f) ? 1.0f : -1.0f;
+        else if (v->wave == 1) o = 4.0f * fabsf(v->ph - 0.5f) - 1.0f;
+        else                   o = v->nz;
+        s += o * env * v->vol;
+        v->f += v->df;
+        if (v->f < 20.0f) v->f = 20.0f;
+        if (--v->left <= 0) v->on = 0;
+    }
+    if (s > 0.9f) s = 0.9f;
+    if (s < -0.9f) s = -0.9f;
+    return s;
+}
+
+static void init_audio(void)
+{
+    audioPortParam p;
+    memset(&p, 0, sizeof(p));
+    p.numChannels = 2;       /* AUDIO_PORT_2CH */
+    p.numBlocks = ANBLK;     /* AUDIO_BLOCK_16 */
+    p.attr = 0;
+    p.level = 1.0f;
+    if (audioInit() != 0) return;
+    if (audioPortOpen(&p, &aport) != 0) { audioQuit(); return; }
+    audioGetPortConfig(aport, &acfg);
+    abase = (float *)(u64)acfg.audioDataStart;
+    memset(abase, 0, ANBLK * ABLK * 2 * sizeof(float));
+    audioPortStart(aport);
+    audio_ok = 1;
+}
+
+static void audio_pump(void)
+{
+    if (!audio_ok) return;
+    u32 N = ANBLK;
+    u32 r = (u32)(*(volatile u64 *)(u64)acfg.readIndex) % N;
+    u32 ahead = (awr + N - r) % N;
+    if (ahead > N - 2) { awr = (r + 2) % N; ahead = 2; }   /* (re)sincroniza */
+    while (ahead < N - 2) {
+        float *out = abase + awr * ABLK * 2;
+        for (int n = 0; n < ABLK; n++) {
+            float s = mix_sample();
+            out[n * 2] = s;
+            out[n * 2 + 1] = s;
+        }
+        awr = (awr + 1) % N;
+        ahead = (awr + N - r) % N;
+    }
+}
+
+static void quit_audio(void)
+{
+    if (!audio_ok) return;
+    audio_ok = 0;
+    audioPortStop(aport);
+    audioPortClose(aport);
+    audioQuit();
+}
+
+/* ======================================================================
+ *  VIDEO
+ * ====================================================================== */
+static gcmContextData *ctx;
+static u32 W, H;
+static u32 *fb[2];
+static u32 fboff[2];
+static u32 *back;
+static int cur = 0, first_flip = 1;
+static volatile int running = 1;
+static int clx0 = 0, clx1 = 0;   /* area de recorte horizontal (tela dividida) */
+
+static void sysutil_cb(u64 status, u64 param, void *usrdata)
+{
+    (void)param; (void)usrdata;
+    if (status == SYSUTIL_EXIT_GAME) running = 0;
+}
+
+static void init_screen(void)
+{
+    void *host = memalign(1024 * 1024, HOST_SIZE);
+    rsxInit(&ctx, CB_SIZE, HOST_SIZE, host);
+
+    videoState st;
+    videoGetState(VIDEO_PRIMARY, 0, &st);
+    u32 resid = st.displayMode.resolution;
+    if (videoGetResolutionAvailability(VIDEO_PRIMARY, VIDEO_RESOLUTION_720, VIDEO_ASPECT_AUTO, 0))
+        resid = VIDEO_RESOLUTION_720;
+
+    videoResolution res;
+    videoGetResolution(resid, &res);
+    W = res.width;
+    H = res.height;
+
+    videoConfiguration vc;
+    memset(&vc, 0, sizeof(vc));
+    vc.resolution = resid;
+    vc.format = VIDEO_BUFFER_FORMAT_XRGB;
+    vc.aspect = VIDEO_ASPECT_AUTO;
+    vc.pitch = W * 4;
+    videoConfigure(VIDEO_PRIMARY, &vc, NULL, 0);
+    videoGetState(VIDEO_PRIMARY, 0, &st);
+
+    gcmSetFlipMode(GCM_FLIP_VSYNC);
+
+    for (int i = 0; i < 2; i++) {
+        fb[i] = (u32 *)rsxMemalign(64, W * H * 4);
+        gcmAddressToOffset(fb[i], &fboff[i]);
+        gcmSetDisplayBuffer(i, fboff[i], W * 4, W, H);
+    }
+    back = (u32 *)memalign(64, W * H * 4);
+    memset(back, 0, W * H * 4);
+    gcmResetFlipStatus();
+    clx0 = 0; clx1 = (int)W;
+}
+
+static void wait_flip(void)
+{
+    while (gcmGetFlipStatus() != 0) {
+        audio_pump();          /* mantem o audio alimentado enquanto espera o vsync */
+        usleep(200);
+    }
+    gcmResetFlipStatus();
+}
+
+static void present(void)
+{
+    if (!first_flip) wait_flip();
+    else gcmResetFlipStatus();
+    memcpy(fb[cur], back, W * H * 4);
+    gcmSetFlip(ctx, cur);
+    rsxFlushBuffer(ctx);
+    gcmSetWaitFlip(ctx);
+    cur ^= 1;
+    first_flip = 0;
+}
+
+/* ---------- desenho (com recorte horizontal) ---------- */
+static void fill_rect(int x, int y, int w, int h, u32 c)
+{
+    int x0 = x < clx0 ? clx0 : x, y0 = y < 0 ? 0 : y;
+    int x1 = x + w, y1 = y + h;
+    if (x1 > clx1) x1 = clx1;
+    if (y1 > (int)H) y1 = H;
+    for (int yy = y0; yy < y1; yy++) {
+        u32 *p = back + yy * W;
+        for (int xx = x0; xx < x1; xx++) p[xx] = c;
+    }
+}
+
+static void circle(int cx, int cy, int r, u32 c)
+{
+    if (r < 1) r = 1;
+    if (cx + r < clx0 || cx - r >= clx1 || cy + r < 0 || cy - r >= (int)H) return;
+    for (int dy = -r; dy <= r; dy++) {
+        int y = cy + dy;
+        if (y < 0 || y >= (int)H) continue;
+        int hw = (int)sqrtf((float)(r * r - dy * dy));
+        int x0 = cx - hw, x1 = cx + hw;
+        if (x0 < clx0) x0 = clx0;
+        if (x1 >= clx1) x1 = clx1 - 1;
+        u32 *p = back + y * W;
+        for (int x = x0; x <= x1; x++) p[x] = c;
+    }
+}
+
+/* fonte 3x5 minima */
+typedef struct { char c; const char *p; } Glyph;
+static const Glyph glyphs[] = {
+    {'0', "###" "#.#" "#.#" "#.#" "###"}, {'1', ".#." "##." ".#." ".#." "###"},
+    {'2', "###" "..#" "###" "#.." "###"}, {'3', "###" "..#" "###" "..#" "###"},
+    {'4', "#.#" "#.#" "###" "..#" "..#"}, {'5', "###" "#.." "###" "..#" "###"},
+    {'6', "###" "#.." "###" "#.#" "###"}, {'7', "###" "..#" "..#" "..#" "..#"},
+    {'8', "###" "#.#" "###" "#.#" "###"}, {'9', "###" "#.#" "###" "..#" "###"},
+    {'A', ".#." "#.#" "###" "#.#" "#.#"}, {'B', "##." "#.#" "##." "#.#" "##."},
+    {'C', "###" "#.." "#.." "#.." "###"}, {'D', "##." "#.#" "#.#" "#.#" "##."},
+    {'E', "###" "#.." "###" "#.." "###"}, {'F', "###" "#.." "##." "#.." "#.."},
+    {'G', "###" "#.." "#.#" "#.#" "###"}, {'H', "#.#" "#.#" "###" "#.#" "#.#"},
+    {'I', "###" ".#." ".#." ".#." "###"}, {'J', "..#" "..#" "..#" "#.#" "###"},
+    {'K', "#.#" "#.#" "##." "#.#" "#.#"}, {'L', "#.." "#.." "#.." "#.." "###"},
+    {'M', "#.#" "###" "###" "#.#" "#.#"}, {'N', "###" "#.#" "#.#" "#.#" "#.#"},
+    {'O', "###" "#.#" "#.#" "#.#" "###"}, {'P', "###" "#.#" "###" "#.." "#.."},
+    {'Q', "###" "#.#" "#.#" "###" "..#"}, {'R', "##." "#.#" "##." "#.#" "#.#"},
+    {'S', "###" "#.." "###" "..#" "###"}, {'T', "###" ".#." ".#." ".#." ".#."},
+    {'U', "#.#" "#.#" "#.#" "#.#" "###"}, {'V', "#.#" "#.#" "#.#" "#.#" ".#."},
+    {'W', "#.#" "#.#" "###" "###" "#.#"}, {'X', "#.#" "#.#" ".#." "#.#" "#.#"},
+    {'Y', "#.#" "#.#" ".#." ".#." ".#."}, {'Z', "###" "..#" ".#." "#.." "###"},
+    {'>', "#.." ".#." "..#" ".#." "#.."}, {'-', "..." "..." "###" "..." "..."},
+    {':', "..." ".#." "..." ".#." "..."}, {'!', ".#." ".#." ".#." "..." ".#."},
+};
+
+static const char *find_glyph(char c)
+{
+    c = (char)toupper((unsigned char)c);
+    for (unsigned i = 0; i < sizeof(glyphs) / sizeof(glyphs[0]); i++)
+        if (glyphs[i].c == c) return glyphs[i].p;
+    return NULL;
+}
+
+static int text_width(const char *s, int sc) { return (int)strlen(s) * 4 * sc - sc; }
+
+static void draw_text(const char *s, int x, int y, int sc, u32 c)
+{
+    for (; *s; s++) {
+        const char *g = find_glyph(*s);
+        if (g)
+            for (int r = 0; r < 5; r++)
+                for (int k = 0; k < 3; k++)
+                    if (g[r * 3 + k] == '#') fill_rect(x + k * sc, y + r * sc, sc, sc, c);
+        x += 4 * sc;
+    }
+}
+
+static void draw_text_c(const char *s, int cx, int y, int sc, u32 c)
+{
+    draw_text(s, cx - text_width(s, sc) / 2, y, sc, c);
+}
+
+/* ======================================================================
+ *  CONTROLES
+ * ====================================================================== */
+typedef struct {
+    int on;                      /* controle conectado */
+    float ax, ay, mag;           /* direcao desejada */
+    int boost, cross, start, select, tri, up, down;
+} PadIn;
+
+static PadIn pin[MAXP], pprev[MAXP];
+static int npads = 0;
+#define PRESS(p, f) (pin[p].f && !pprev[p].f)
+
+/* Jogador 1 = primeiro controle conectado (em qualquer porta),
+   Jogador 2 = segundo controle conectado. */
+static void read_pads(void)
+{
+    padInfo info;
+    padData d;
+    int n = 0;
+
+    memset(pin, 0, sizeof(pin));
+    ioPadGetInfo(&info);
+
+    for (int i = 0; i < NPADS; i++) {
+        if (!info.status[i]) continue;
+        if (n < MAXP) {
+            memset(&d, 0, sizeof(d));
+            ioPadGetData(i, &d);
+            PadIn *p = &pin[n];
+            p->on = 1;
+
+            float ax = 0, ay = 0;
+            /* se todos os eixos vierem 0 o dado ainda nao e valido: ignora o analogico */
+            if (d.ANA_L_H || d.ANA_L_V || d.ANA_R_H || d.ANA_R_V) {
+                ax = ((int)d.ANA_L_H - 128) / 128.0f;
+                ay = ((int)d.ANA_L_V - 128) / 128.0f;
+                if (sqrtf(ax * ax + ay * ay) < 0.25f) ax = ay = 0;   /* zona morta */
+            }
+            /* direcional tem prioridade e aceita diagonal */
+            float dx = (d.BTN_RIGHT ? 1.0f : 0.0f) - (d.BTN_LEFT ? 1.0f : 0.0f);
+            float dy = (d.BTN_DOWN ? 1.0f : 0.0f) - (d.BTN_UP ? 1.0f : 0.0f);
+            if (dx != 0 || dy != 0) { ax = dx; ay = dy; }
+
+            p->ax = ax; p->ay = ay;
+            p->mag = sqrtf(ax * ax + ay * ay);
+            p->boost = d.BTN_CROSS || d.BTN_R1 || d.BTN_R2 || d.BTN_L1 || d.BTN_L2;
+            p->cross = d.BTN_CROSS;
+            p->start = d.BTN_START;
+            p->select = d.BTN_SELECT;
+            p->tri = d.BTN_TRIANGLE;
+            p->up = d.BTN_UP || ay < -0.6f;
+            p->down = d.BTN_DOWN || ay > 0.6f;
+        }
+        n++;
+    }
+    npads = n;
+}
+
+/* ======================================================================
+ *  JOGO
+ * ====================================================================== */
+enum { ST_MENU, ST_PLAY, ST_PAUSE };
+static int state = ST_MENU, menu_sel = 0, nplayers = 1, mt = 0;
+
+static Snake sn[NSN];
+static Pellet pel[NPEL];
+static int pelrot = 0;
+static int dead_t[MAXP];
+static float cam_x[MAXP], cam_y[MAXP];
+
+static float frand(void) { return (float)rand() / (float)RAND_MAX; }
+
+static float radius_of(const Snake *s)
+{
+    int l = s->len > 240 ? 240 : s->len;
+    return 9.0f + l * 0.035f;
+}
+
+static void add_pellet(float x, float y, int size)
+{
+    for (int k = 0; k < NPEL; k++) {
+        int i = (pelrot + k) % NPEL;
+        if (!pel[i].active) {
+            pel[i].x = x; pel[i].y = y; pel[i].size = size; pel[i].active = 1;
+            pel[i].col = palette[rand() % 8];
+            pelrot = (i + 1) % NPEL;
+            return;
+        }
+    }
+}
+
+static void spawn_snake(int i)
+{
+    Snake *s = &sn[i];
+    float x = 400 + frand() * (WORLD - 800), y = 400 + frand() * (WORLD - 800);
+    s->ang = frand() * 2 * PI;
+    s->tgt = s->ang;
+    s->len = 10;
+    for (int j = 0; j < s->len; j++) {
+        s->x[j] = x - cosf(s->ang) * SP * j;
+        s->y[j] = y - sinf(s->ang) * SP * j;
+    }
+    s->alive = 1; s->respawn = 0; s->boost = 0; s->grow = 0; s->tick = 0;
+    s->col = palette[i % 8];
+    if (i < MAXP) { cam_x[i] = x; cam_y[i] = y; }
+}
+
+static void kill_snake(int i)
+{
+    Snake *s = &sn[i];
+    for (int j = 0; j < s->len; j += 2)
+        add_pellet(s->x[j] + (frand() - 0.5f) * 10, s->y[j] + (frand() - 0.5f) * 10, 2);
+    s->alive = 0;
+    s->respawn = 240;
+    if (i < nplayers) {
+        dead_t[i] = 0;
+        sfx_die();
+    } else {
+        /* explosao baixinha se o bot morreu perto de um jogador */
+        for (int p = 0; p < nplayers; p++) {
+            if (!sn[p].alive) continue;
+            float dx = s->x[0] - sn[p].x[0], dy = s->y[0] - sn[p].y[0];
+            if (dx * dx + dy * dy < 600.0f * 600.0f) { sfx_boom(); break; }
+        }
+    }
+}
+
+static void bot_think(int i)
+{
+    Snake *s = &sn[i];
+    float hx = s->x[0], hy = s->y[0];
+    s->tgt += (frand() - 0.5f) * 0.25f;
+
+    if (s->tick % 6 == 0) {
+        float best = 380.0f * 380.0f;
+        int bi = -1;
+        for (int k = 0; k < NPEL; k++) {
+            if (!pel[k].active) continue;
+            float dx = pel[k].x - hx, dy = pel[k].y - hy, d = dx * dx + dy * dy;
+            if (d < best) { best = d; bi = k; }
+        }
+        if (bi >= 0) s->tgt = atan2f(pel[bi].y - hy, pel[bi].x - hx);
+    }
+
+    if (hx < 250 || hx > WORLD - 250 || hy < 250 || hy > WORLD - 250)
+        s->tgt = atan2f(WORLD / 2 - hy, WORLD / 2 - hx);
+
+    float px = hx + cosf(s->ang) * 55, py = hy + sinf(s->ang) * 55;
+    float rs = radius_of(s);
+    for (int o = 0; o < NSN; o++) {
+        if (o == i || !sn[o].alive) continue;
+        float lim = rs + radius_of(&sn[o]) + 25;
+        lim *= lim;
+        for (int j = 0; j < sn[o].len; j += 2) {
+            float dx = sn[o].x[j] - px, dy = sn[o].y[j] - py;
+            if (dx * dx + dy * dy < lim) { s->tgt = s->ang + 1.6f; return; }
+        }
+    }
+}
+
+static void update_snake(int i)
+{
+    Snake *s = &sn[i];
+    if (!s->alive) {
+        if (i >= nplayers && --s->respawn <= 0) spawn_snake(i);
+        return;
+    }
+    s->tick++;
+    if (i < nplayers) {
+        if (pin[i].mag > 0.3f) s->tgt = atan2f(pin[i].ay, pin[i].ax);
+        if (pin[i].boost && !s->boost && s->len > 12) sfx_boost();
+        s->boost = pin[i].boost;
+    } else {
+        bot_think(i);
+        s->boost = (s->len > 30 && (s->tick / 90) % 5 == 0) ? 1 : 0;
+    }
+
+    float d = s->tgt - s->ang;
+    while (d > PI) d -= 2 * PI;
+    while (d < -PI) d += 2 * PI;
+    if (d > 0.075f) d = 0.075f;
+    if (d < -0.075f) d = -0.075f;
+    s->ang += d;
+
+    float sp = 3.0f;
+    if (s->boost && s->len > 12) {
+        sp = 5.4f;
+        if (s->tick % 10 == 0) {
+            s->len--;
+            add_pellet(s->x[s->len], s->y[s->len], 1);
+        }
+    }
+    s->x[0] += cosf(s->ang) * sp;
+    s->y[0] += sinf(s->ang) * sp;
+    for (int j = 1; j < s->len; j++) {
+        float dx = s->x[j - 1] - s->x[j], dy = s->y[j - 1] - s->y[j];
+        float dd = sqrtf(dx * dx + dy * dy);
+        if (dd > SP) {
+            float f = (dd - SP) / dd;
+            s->x[j] += dx * f;
+            s->y[j] += dy * f;
+        }
+    }
+
+    if (s->x[0] < 0 || s->x[0] > WORLD || s->y[0] < 0 || s->y[0] > WORLD) { kill_snake(i); return; }
+
+    float rs = radius_of(s), er = rs + 12;
+    int ate = 0;
+    for (int k = 0; k < NPEL; k++) {
+        if (!pel[k].active) continue;
+        float dx = pel[k].x - s->x[0], dy = pel[k].y - s->y[0];
+        if (dx * dx + dy * dy < er * er) {
+            pel[k].active = 0;
+            s->grow += pel[k].size;
+            s->score += pel[k].size * 5;
+            ate++;
+        }
+    }
+    if (ate && i < nplayers) sfx_eat(s->score / 5);
+    while (s->grow >= 2 && s->len < MAXSEG) {
+        s->x[s->len] = s->x[s->len - 1];
+        s->y[s->len] = s->y[s->len - 1];
+        s->len++;
+        s->grow -= 2;
+    }
+    if (s->len >= MAXSEG) s->grow = 0;
+
+    for (int o = 0; o < NSN; o++) {
+        if (o == i || !sn[o].alive) continue;
+        float lim = (rs + radius_of(&sn[o])) * 0.75f;
+        lim *= lim;
+        for (int j = 0; j < sn[o].len; j++) {
+            float dx = sn[o].x[j] - s->x[0], dy = sn[o].y[j] - s->y[0];
+            if (dx * dx + dy * dy < lim) { kill_snake(i); return; }
+        }
+    }
+}
+
+static void init_game(void)
+{
+    memset(pel, 0, sizeof(pel));
+    for (int k = 0; k < NPEL; k++) add_pellet(frand() * WORLD, frand() * WORLD, 1 + (rand() % 5 == 0));
+    for (int i = 0; i < NSN; i++) { sn[i].score = 0; spawn_snake(i); }
+    for (int p = 0; p < MAXP; p++) dead_t[p] = 0;
+}
